@@ -134,16 +134,34 @@ supabase/
   migrations/
 ```
 
+All Supabase migration files must use the timestamp naming convention:
+
+```text
+YYYYMMDDHHMMSS_descriptive_name.sql
+```
+
 Example:
 
 ```text
-001_academic_structure.sql
-002_profiles.sql
-003_courses_and_offerings.sql
-004_practice_content.sql
-005_attempts.sql
-006_payments_and_access.sql
+20260918213542_student_profiles.sql
 ```
+
+Do not use sequential names such as:
+
+```text
+001_student_profiles.sql
+002_attempts.sql
+```
+
+Before creating a migration, generate a fresh timestamp and place the file in:
+
+```text
+supabase/migrations/
+```
+
+Once a migration has been applied to the shared Supabase database, do not rename it or edit it in place.
+
+Any later schema change must be made through a new migration.
 
 Before a migration is merged, another developer should be able to understand what it changes and why.
 
@@ -249,7 +267,7 @@ Example:
 ```text
 Course discovery
 Practice experience
-Payments and access
+Access administration
 Written review
 Progress
 Content management
@@ -273,12 +291,12 @@ courseOfferingId
 
 USES:
 course offering
-active access
+centralized effective-access result
 practice sets
 
 OUTPUT:
 student can open an available practice set
-or see purchase options
+or see that access is unavailable
 ```
 
 Example:
@@ -316,7 +334,7 @@ main
  |
  +-- feature/cbt-practice
  |
- +-- feature/payment-access
+ +-- feature/admin-access
 ```
 
 Before starting work:
@@ -468,7 +486,7 @@ Examples:
 database schema
 authentication
 course access
-payments
+future payments
 attempt lifecycle
 question structure
 content publication
@@ -580,9 +598,9 @@ Examples:
 
 ```text
 Course vs Course Offering
-Profile vs Course Access
+Academic Assignment vs Effective Access
 Practice Set vs Attempt
-Payment vs Access
+Payment/Package vs Course Access Grant
 CBT vs Written flow
 Content Submission vs Published Content
 ```
@@ -693,7 +711,7 @@ Written practice path
         v
 
 MILESTONE 5
-Payments and bundle access
+Admin content and access operations
 
         |
         v
@@ -808,7 +826,7 @@ Good:
 ```text
 Add College-first course catalogue
 Add course search
-Add active course access check
+Add centralized effective-access check
 ```
 
 Harder to review:
@@ -868,10 +886,10 @@ feature/cbt-practice
 
 
 Developer C
-Access/payment integration
+Admin access integration
         |
         v
-feature/payment-access
+feature/admin-access
 ```
 
 The exact assignments can change.
