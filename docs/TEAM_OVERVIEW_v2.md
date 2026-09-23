@@ -67,7 +67,7 @@ A course offering tells us:
 - the course
 - session
 - semester
-- one or more Department + Level academic assignments
+- zero or more Department + Level academic assignments
 - exam mode
 - expected Questions per Practice Set
 - practice duration
@@ -89,6 +89,13 @@ through Course Offering academic assignments. College is structural browsing and
 filter context; College alone does not recommend every course in that College.
 Academic assignments do not authorize access or restrict which Course Offerings
 may receive an access grant.
+
+An Offering with zero assignments is valid. It will not appear in Department +
+Level profile recommendations, which is a warning rather than a blocker for
+Review or publication. It remains available for direct catalogue discovery and
+Course Access where otherwise applicable. Assignment changes do not invalidate
+Published content, terminate in-progress Attempts, or rewrite existing access or
+purchase history.
 
 ```text
 PROFILE = RECOMMENDATION

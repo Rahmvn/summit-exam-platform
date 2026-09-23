@@ -329,6 +329,14 @@ This means:
 - centralized effective-access policy determines whether a new Attempt may start
 - academic profile data only helps personalise discovery
 
+A Course Offering may validly have zero academic assignments. In that case it
+does not appear in Department + Level profile recommendations, but remains
+eligible for direct catalogue discovery and Course Access under the same rules
+as any other Offering. Zero assignments is a readiness warning, not a blocker
+for Review or publication. Assignment changes do not invalidate Published
+content, terminate an in-progress Attempt, or rewrite existing access or
+purchase history.
+
 ## 10. MAIN STUDENT FLOW
 
 The basic flow should be:
@@ -953,7 +961,7 @@ Course Offerings
 - course
 - session
 - semester
-- one or more Department + Level academic assignments
+- zero or more Department + Level academic assignments
 - exam mode
 - expected Questions per Practice Set
 - practice duration

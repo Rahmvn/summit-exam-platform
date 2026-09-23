@@ -301,6 +301,8 @@ Department + Level
 ```
 
 One Offering may have multiple assignments, including different Levels across Departments.
+It may also validly have zero assignments. No special mode or default assignment
+is required.
 
 Example:
 
@@ -324,6 +326,10 @@ Removing an assignment changes relevance but does not:
 
 - revoke existing Course Access;
 - remove an off-profile purchase or grant;
+- prevent direct catalogue discovery where otherwise applicable;
+- block Draft -> Review or Review -> Published;
+- invalidate Published content;
+- terminate an in-progress Attempt;
 - invalidate historical Attempts;
 - silently rewrite a future package or historical purchase composition.
 
@@ -525,7 +531,6 @@ Admin sees an actionable readiness result, not raw constraints or database error
 Readiness conceptually verifies:
 
 - valid Offering relationship;
-- at least one valid Course Assignment;
 - configured expected Question count;
 - configured practice duration;
 - exact Question count;
@@ -536,6 +541,11 @@ Readiness conceptually verifies:
 - exactly one valid CBT correct answer under the current model;
 - required Written model-answer and key-point data;
 - any other authoritative structural integrity rule.
+
+Zero Course Assignments is not a structural readiness blocker. It produces a
+warning that the Offering will not appear in Department + Level profile
+recommendations. Authorization remains governed by the effective-access policy
+and Course Access, not Course Assignment.
 
 Offering activity is Candidate-availability state, not a content-readiness
 requirement for Send for Review or Publish. It remains required when a Candidate
@@ -1159,6 +1169,7 @@ reconciliation requires separately authorized backend work.
 ## Course Assignment and practice configuration
 
 - [ ] One Offering can display and manage multiple Department + Level assignments.
+- [ ] Zero assignments is valid and appears as a recommendation-visibility warning, not a Review or Publish blocker.
 - [ ] College is contextual and never independently grants recommendation relevance.
 - [ ] Assignment changes never imply Course Access changes.
 - [ ] Expected Question count and duration are clearly Offering-level.
