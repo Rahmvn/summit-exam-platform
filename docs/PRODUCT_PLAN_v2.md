@@ -13,7 +13,7 @@ It is meant to give the team one shared understanding of:
 - how students will move through the platform
 - how CBT and written practice should work
 - how courses, questions and content should be organised
-- how payments and access should work
+- how access should work while payments are deferred
 - how content should be sourced and reviewed
 - the major systems the application will need
 
@@ -170,6 +170,12 @@ A course offering should be able to describe:
 - level
 - departments taking it
 - examination mode
+- expected Questions per Practice Set
+- practice duration
+
+Practice duration is configured in minutes in the Admin experience and may be
+represented in seconds internally. Expected Question count and duration apply
+to every Practice Set in the Offering; V1 has no per-set overrides.
 
 This also helps if the examination mode changes later.
 
@@ -211,17 +217,20 @@ Likely profile information:
 - College
 - Department
 - Level
+- Current Semester
 
-The system can use this information to show courses that are relevant to the student.
+Department, Level and current Semester determine which Course Offerings are
+recommended. College provides structure and browsing/filter context; College by
+itself must not make every Course Offering in that College recommended.
 
 This is for discovery and personalisation.
 
-It should not necessarily stop the student from searching for or buying another available course if needed.
+It should not stop the student from searching for or receiving access to another available course if needed.
 
 
 ## 9. COURSE DISCOVERY, PROFILE CHANGES AND ACCESS INDEPENDENCE
 
-A student's academic profile should help the platform recommend and organise courses, but it must not restrict which courses the student can purchase.
+A student's academic profile should help the platform recommend and organise courses, but it must not restrict which Course Offerings may receive an access grant.
 
 A student may need a course outside their current department or level for reasons such as:
 
@@ -236,7 +245,7 @@ The platform should follow this rule:
 ```text
 ACADEMIC PROFILE = DISCOVERY / RECOMMENDATION
 
-PURCHASED ACCESS = ACTUAL ACCESS
+EFFECTIVE ACCESS POLICY = AUTHORIZATION
 ```
 
 The student's profile may include:
@@ -244,11 +253,11 @@ The student's profile may include:
 - College
 - Department
 - Level
-- Current academic session or year
+- Current Semester
 
 Students should be allowed to update these details later.
 
-Changing profile information must not remove, shorten or otherwise affect access to courses already purchased.
+Changing profile information must not remove, shorten or otherwise affect existing Course Access Grants.
 
 Example:
 
@@ -258,7 +267,7 @@ Before profile change:
 Department: Software Engineering
 Level: 300 Level
 
-Purchased:
+Active access:
 - GST 301
 - CSC 205
 - SWE 303
@@ -271,7 +280,7 @@ Department: Software Engineering
 Level: 400 Level
 ```
 
-the existing purchased courses must remain available until their individual access periods expire.
+the existing access grants must remain available until their individual access periods expire or are revoked by a trusted Admin operation.
 
 The profile change should only affect what the platform recommends or shows first.
 
@@ -302,10 +311,10 @@ The dashboard can separate:
 
 ```text
 YOUR COURSES
-Courses the student has purchased and still has access to
+Course Offerings for which the student has active access
 
 RELEVANT COURSES
-Courses suggested from the student's current academic profile
+Offerings assigned to the student's Department + Level in the current Semester
 
 BROWSE ALL COURSES
 Browse by College, optionally filter by Department, or search directly
@@ -313,10 +322,11 @@ Browse by College, optionally filter by Department, or search directly
 
 This means:
 
-- any student can purchase any available course
+- any Candidate may receive access to any available Course Offering
 - department and level are not access restrictions
-- changing academic details does not affect previous purchases
-- purchase/access records are the source of truth for what is unlocked
+- changing academic details does not affect existing access grants
+- academic assignment determines relevance, not authorization
+- centralized effective-access policy determines whether a new Attempt may start
 - academic profile data only helps personalise discovery
 
 ## 10. MAIN STUDENT FLOW
@@ -343,7 +353,7 @@ Choose a course
 v
 Check access
 |
-+--> No access -> Buy access
++--> No effective access -> Access unavailable
 |
 v
 Open course
@@ -372,10 +382,10 @@ It should not be filled with unnecessary information.
 
 Useful dashboard information may include:
 
-- courses relevant to the student's department and level
-- courses already purchased
+- courses relevant to the student's Department, Level and current Semester
+- courses with effective access
 - recent practice activity
-- progress in purchased courses
+- progress in courses with effective access
 - access expiry dates
 - unfinished attempts, if we choose to support continuation
 
@@ -419,7 +429,7 @@ The exam mode of the course determines how its practice sets behave.
 
 ## 13. PRACTICE SETS
 
-Each course contains practice sets.
+Each Course Offering contains Practice Sets.
 
 A practice set is simply a grouped set of questions for that course.
 
@@ -434,6 +444,22 @@ CSC 301
 
 Practice sets give students smaller, manageable practice sessions.
 
+The Practice Set is the only content publication unit. Its lifecycle is:
+
+```text
+draft -> review -> published -> archived
+```
+
+There is no Approved Practice Set state. Questions do not have an independent
+editorial or publication lifecycle. Their eligibility is derived from data
+integrity, operationally active state, exam-mode requirements and valid mapping
+to the Practice Set. `questions.is_active` remains an operational kill switch.
+
+Sending a Set to Review requires the exact Offering-configured Question count,
+valid ordered mappings, same-Offering integrity, active Questions and all
+required CBT or Written data. Publishing requires the Set to already be in
+Review and the readiness check to still pass.
+
 We do not need to introduce extra labels like "mock exam" or "full practice" for now.
 
 If a future feature is needed, we should name it based on what it actually does.
@@ -442,6 +468,10 @@ If a future feature is needed, we should name it based on what it actually does.
 ## 14. CBT PRACTICE
 
 A CBT practice set contains objective questions.
+
+Practice is timed using the duration configured on the Course Offering. A new
+Attempt snapshots that duration and a server-authoritative deadline. The browser
+countdown is presentation only.
 
 The student should be able to:
 
@@ -486,6 +516,10 @@ CBT review can show:
 ## 15. WRITTEN PRACTICE
 
 Written practice is self-assessed.
+
+Written practice uses the same server-authoritative timer model as CBT. If time
+expires, unresolved Questions remain timed-out/unanswered; they are not
+automatically marked as skipped.
 
 We should not pretend the system can perfectly grade written answers in the first version.
 
@@ -615,7 +649,7 @@ Question
 +-- Course: CSC 301
 +-- Topic: Database Normalisation
 +-- Source note: Week 4 material
-+-- Reviewed by: Content Manager
++-- Reviewed by: Admin
 
 This becomes useful when:
 
@@ -634,88 +668,122 @@ The three developers should not be expected to personally source and maintain ev
 
 The product will likely need a wider content network.
 
-Possible roles:
+V1 operational roles:
 
-Core Team
+Admin
 - product and technical decisions
 - platform development
 - operations oversight
-
-Student Contributors
-- help obtain current course materials
-- help identify relevant past questions
-- provide departmental/course context
-- report outdated content
-
-Content Manager
 - review submitted materials
 - verify questions and answers
 - organise content
-- approve content before publication
+- publish complete Practice Sets
 - handle reported errors
 
-Contributors may eventually need to be paid.
-
-This does not need to happen immediately, but the product should be designed with the understanding that content work has real value.
+Candidate is the only other V1 role. There is no Content Manager role or detailed
+permission matrix in V1. Student contribution and narrower content roles may be
+considered later without changing the Candidate/Admin boundary now.
 
 
 ## 20. CONTENT WORKFLOW
 
 A controlled content flow is better than allowing random content directly into production.
 
-Suggested flow:
+The V1 Admin authoring flow is Practice Set-first:
 
-Material / Question found
+Course
 |
 v
-Submitted
+Course Offering
 |
 v
-Source identified
+Practice Set (draft)
 |
 v
-Reviewed
+Add Questions manually or import them in bulk
 |
 v
-Questions prepared
+Validate structural completeness
 |
 v
-Answers checked
+Practice Set (review)
 |
 v
-Approved
+Revalidate readiness
 |
 v
-Published
+Practice Set (published)
 
-This gives the platform a quality-control layer.
+Questions remain reusable underlying entities through ordered mappings, but V1
+does not use a Question Pool-first Admin UI.
+
+Bulk Question Import is V1:
+
+```text
+upload -> parse -> validate -> preview -> confirm -> atomic commit
+```
+
+The confirmed import creates Questions and mappings in one transaction so a
+failure cannot leave partial content.
+
+Frozen Attempt snapshots protect historical Attempts. A substantive correction
+to a reused Question must not silently change every published Practice Set that
+uses it. V1 prefers impact-aware replacement and explicit remapping; harmless
+typo, formatting or reference corrections may be audited in place. Formal
+Question and Practice Set version subsystems are not part of V1.
+
+Append-only Admin audit data must exist before consequential Admin mutation APIs.
+No Activity UI is required in V1.
 
 
-## 21. PAYMENT AND ACCESS MODEL
+## 21. ACCESS MODEL AND FUTURE PAYMENTS
 
-The product will be paid, but pricing should remain fair for students.
+Payments and purchase flows are deferred beyond V1. Manual Admin Course Access
+grant/revoke remains V1.
 
-The current direction is flexible course-based access rather than forcing students to buy an entire department or level package.
+The platform access policy supports:
+
+```text
+free           -> no individual Course Access Grant required
+free_until     -> before cutoff no grant required; at/after cutoff an active grant is required
+grant_required -> an active effective Course Access Grant is required
+```
+
+Effective access must eventually be evaluated centrally by trusted runtime logic;
+the browser must not independently combine policy mode, cutoff and grant state.
+Reaching a `free_until` cutoff does not change the stored policy mode and requires
+no scheduler, Admin action or database mutation. An active individual Course
+Access Grant authorizes a new Attempt after the cutoff.
+An Attempt validly started during a `free_until` window may finish after the
+cutoff, subject to its own snapshotted authoritative deadline.
+
+When grants are required, including after a `free_until` cutoff, Course Access is
+the authorization primitive. Admins need trusted APIs to inspect Candidate and
+Offering grants, grant or revoke with reasons, preserve history, enforce
+integrity and record append-only audit data.
+
+The product may later be paid, but pricing should remain fair for students.
+
+Future commerce is hybrid rather than package-only.
 
 A student should be able to:
 
-- buy one course
-- buy several courses
-- receive a discount when buying several courses
+- buy an individual Course Offering, including one outside their profile
+- buy an academic bundle/package
+- buy an individual Offering without first buying their Department/Level package
 
 This is cleaner because students may not need every course at the same time.
 
 Example:
 
-Student selects:
-- CSC 301
-- SWE 303
-- GST 301
+Student selects either:
+- CSC 301 as an individual Course Offering
+- a defined academic bundle containing CSC 301, SWE 303 and GST 301
 
 Then chooses an access duration.
 
 
-## 22. ACCESS DURATION
+## 22. FUTURE PURCHASE DURATION
 
 The current preferred structure is:
 
@@ -734,13 +802,23 @@ Access expires on December 5.
 This is easy to understand and fair because the student receives the duration they paid for regardless of when they bought.
 
 
-## 23. BUNDLES
+## 23. FUTURE BUNDLES
 
-Bundles should give students flexibility.
+An academic bundle/package is scoped by:
+
+- Department
+- Level
+- Academic Session
+- Semester
+
+Its composition is an explicit list of Course Offerings. Course academic
+assignments may suggest or initially populate the list, but later assignment
+changes must not silently rewrite an existing package or what an existing
+purchase contained.
 
 Possible flow:
 
-Select one or more courses
+Choose an academic bundle
 |
 v
 System calculates total
@@ -755,15 +833,18 @@ v
 Pay
 |
 v
-Access granted to selected courses
+Course Access granted to every included Course Offering
 
 We do not need to finalise the exact discount formula yet.
 
 The important product rule is:
 
-Academic structure controls what is shown as relevant.
+Academic assignments control what is shown as relevant.
 
-Payment controls what is unlocked.
+When grants are required, Course Access Grants control what is unlocked. A future
+individual purchase, academic bundle purchase, manual Admin action or institutional
+grant may produce them through trusted processing. Payment itself is never
+authorization.
 
 
 ## 24. WHY WE SHOULD NOT SELL ONLY BY DEPARTMENT OR LEVEL
@@ -772,11 +853,15 @@ Selling only by department or level creates extra complications.
 
 It would require the system to perfectly know every course each student should have before access can be granted.
 
-Course-based access is more flexible.
+The platform therefore supports individual Course Offering purchase alongside
+academic bundles, rather than making a bundle a prerequisite.
 
-The platform can still recommend the student's department/level courses, while allowing them to buy only what they actually need.
+If payments are introduced later, the platform can still recommend the
+student's department/level courses while allowing them to buy only what they
+actually need.
 
-Later, we can still introduce larger semester packages if users want them.
+Academic bundles remain explicitly scoped and contain explicit Course Offerings;
+they are not generated dynamically at authorization time from current assignments.
 
 
 ## 25. MAJOR PRODUCT SYSTEMS
@@ -793,11 +878,12 @@ At a high level, the application needs these systems:
 8. Written practice engine
 9. Attempt and answer storage
 10. Results and progress
-11. Payment
-12. Access control
-13. Content management
-14. Content contribution and review
-15. Administration
+11. Access control
+12. Content management
+13. Content contribution and review
+14. Administration
+
+Payment and bundle commerce are future systems, not V1 systems.
 
 
 ## 26. HIGH-LEVEL SYSTEM SKETCH
@@ -818,7 +904,7 @@ Relevant Courses
 v
 Course Access Check
 |
-+--> No Access -> Payment -> Access Granted
++--> Central policy resolver -> Access Granted or Unavailable
 |
 v
 Course
@@ -836,25 +922,8 @@ Progress
 
 CONTENT SIDE
 
-Source Material
-|
-v
-Contributor Submission
-|
-v
-Content Review
-|
-v
-Question Preparation
-|
-v
-Verification
-|
-v
-Publish
-|
-v
-Course Practice Sets
+Course -> Course Offering -> Practice Set (draft)
+  -> Add/import Questions -> Validate -> Review -> Publish
 
 
 ## 27. CONCEPTUAL DATA STRUCTURE
@@ -884,13 +953,16 @@ Course Offerings
 - course
 - session
 - semester
-- level
-- departments
+- one or more Department + Level academic assignments
 - exam mode
+- expected Questions per Practice Set
+- practice duration
 
 Practice Content
 - practice sets
+- Practice Set lifecycle: draft, review, published, archived
 - questions
+- ordered Practice Set Question mappings
 - options for CBT
 - correct answers
 - model answers for written
@@ -908,13 +980,24 @@ Attempts
 - score for CBT
 - written self-assessment
 - timestamps
+- duration snapshot
+- authoritative deadline
 
-Commerce
-- selected courses
-- payment
-- duration
+Access
+- platform policy: free, free_until or grant_required
+- centralized effective-access result
+- Course Offering grant
 - access start
 - access expiry
+- optional revocation
+- Admin reason and audit
+
+Future Commerce
+- individual Course Offering purchase
+- academic bundle scoped by Department, Level, Academic Session and Semester
+- explicit bundle Course Offering items
+- purchased composition snapshot
+- resulting Course Access Grants for every purchased Offering
 
 Content Operations
 - submissions
@@ -922,7 +1005,8 @@ Content Operations
 - review status
 - reviewer
 - source records
-- publication status
+- Practice Set publication status
+- Admin audit
 
 
 ## 28. IMPORTANT ARCHITECTURAL RULES
@@ -943,11 +1027,15 @@ The following ideas should guide implementation:
 
 7. Content should be traceable to its source where possible.
 
-8. Content should be reviewed before publication.
+8. Practice Sets should pass readiness, Review and revalidation before publication.
 
-9. Payment should unlock selected courses for a defined duration.
+9. Effective access is centrally resolved from `free`, the pre-cutoff
+   `free_until` window, or an active Course Access Grant under `grant_required`
+   and post-cutoff `free_until`; payment is never authorization.
 
-10. The architecture should allow future expansion without forcing the first version to include every future feature.
+10. Timer authority is server-side; the browser countdown is presentation only.
+
+11. The architecture should allow future expansion without forcing the first version to include every future feature.
 
 
 ## 29. V1 SCOPE
@@ -964,10 +1052,12 @@ V1 should include:
 - course offerings
 - CBT and written exam mode support
 - course discovery
-- course purchase/access
-- 1, 2 and 3 month durations
-- multi-course bundle support
+- centralized effective-access policy with `free`, `free_until` and `grant_required`
+- manual Admin Course Access grant/revoke
 - practice sets
+- Practice Set-first Admin authoring
+- bulk Question import with atomic commit
+- server-authoritative timed practice
 - CBT answering and scoring
 - written answering/skipping
 - written review and self-assessment
@@ -975,6 +1065,7 @@ V1 should include:
 - progress
 - basic admin/content management
 - basic content review workflow
+- append-only Admin audit before consequential mutation APIs
 
 Things that do not need to be in V1:
 
@@ -986,6 +1077,9 @@ Things that do not need to be in V1:
 - advanced recommendation systems
 - extra exam modes with vague names
 - features added only because they sound impressive
+- payment and bundle commerce
+- Content Manager role or detailed permission matrix
+- Question-version or Practice-Set-version subsystems
 
 
 ## 30. FUTURE POSSIBILITIES
@@ -1000,7 +1094,7 @@ Possible future additions:
 - richer contributor tools
 - course-specific analytics
 - stronger question reporting
-- semester packages
+- academic bundle/package commerce
 - revision recommendations
 - more universities
 
@@ -1027,11 +1121,15 @@ The following can be decided later:
 - product name
 - exact pricing
 - exact bundle discount formula
-- exact number of questions per set
+- access-policy configuration ownership
+- exact backend storage and time-zone representation for the authoritative `free_until` cutoff
+- whether `My Courses` should include every accessible Offering while the platform is free
+- bundle editing rules after publication and the exact purchase-composition snapshot mechanism
+- exact Offering configurations for Question count and duration
 - exact self-assessment labels
-- detailed admin permissions
+- future permissions beyond Candidate and Admin
 - exact contribution/reward model
-- whether students can resume unfinished practice
+- exact legacy treatment for pre-timer Attempts beyond preserving no invented deadline
 - exact visual design
 - detailed technical stack decisions
 - how the three developers will divide development work
@@ -1041,7 +1139,8 @@ Those decisions should not stop us from agreeing on the product structure first.
 
 ## 33. CURRENT PRODUCT SUMMARY
 
-We are building a paid but affordable exam preparation platform for Summit University students.
+We are building an exam preparation platform for Summit University students.
+Payments are deferred beyond V1.
 
 The platform understands:
 
@@ -1054,14 +1153,20 @@ College
 
 Each course offering has the examination mode that applies to it.
 
-Students discover relevant courses, buy access to the courses they need, choose a 1, 2 or 3 month duration, and practise through structured question sets.
+Students discover relevant Courses through Department + Level + current Semester
+assignments, receive centrally evaluated effective access, and practise through
+structured timed Practice Sets. Manual Admin Course Access grant/revoke remains V1;
+payment and bundle commerce remain deferred.
 
 CBT courses are automatically scored.
 
 Written courses allow students to type answers or skip questions, submit the full set, compare their answers with trusted model answers, and self-assess.
 
-Content comes from trusted academic materials, past questions, student contributions and other relevant sources, but it should pass through a review process before publication.
+Content comes from trusted academic materials, past questions and other relevant
+sources. The Practice Set is the publication unit and must pass readiness,
+Review and revalidation before publication.
 
-The platform should eventually use a network of contributors and a content manager so that maintaining course content does not depend only on the three developers.
+The platform may eventually use a network of contributors and narrower content
+roles, but V1 roles remain Candidate and Admin.
 
 The next separate discussion should focus on how the three developers will work together to build this product without creating three disconnected codebases or conflicting implementations.

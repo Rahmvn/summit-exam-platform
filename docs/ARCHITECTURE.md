@@ -31,8 +31,9 @@ It must support:
 - First and Second Semester
 - courses shared across departments
 - CBT or Written exam mode per course offering
-- unrestricted course purchasing
-- course-based timed access
+- centrally evaluated Course Offering access policies
+- manual Admin access grant and revoke in V1
+- server-authoritative timed practice
 - CBT scoring
 - written self-assessment
 - content review and publication
@@ -66,17 +67,15 @@ RELEVANT COURSES      BROWSE ALL COURSES
              v
         ACCESS CHECK
              |
-      +------+------+
+             v
+   EFFECTIVE-ACCESS RESOLVER
       |             |
-   HAS ACCESS     NO ACCESS
-      |             |
-      |             v
-      |         PAYMENT
+    ALLOW          DENY
       |             |
       |             v
-      |        ACCESS RECORD
-      |             |
-      +------+------+
+      |      ACCESS UNAVAILABLE
+      |
+      +-------------+
              |
              v
           COURSE
@@ -120,11 +119,14 @@ The application should be separated logically into these domains:
 8. Written Practice
 9. Attempts and Answers
 10. Results and Progress
-11. Payments
-12. Access Control
-13. Content Contribution
-14. Content Review
-15. Administration
+11. Access Control
+12. Content Contribution
+13. Content Review
+14. Administration
+
+Payments and bundle commerce are deferred beyond V1. Their eventual design may
+create normal Course Access Grants, but payment records must never become a
+separate authorization system.
 
 These are system responsibilities, not necessarily separate applications.
 
@@ -139,7 +141,7 @@ It answers:
 - Who is this user?
 - Is the user logged in?
 - What account owns this profile?
-- What purchases and attempts belong to this user?
+- What access grants and Attempts belong to this user?
 
 Authentication should not contain academic logic.
 
@@ -155,42 +157,58 @@ Those responsibilities belong to other domains.
 
 # 5. Student Profile
 
-The student profile stores academic information used for personalisation.
+Authentication and academic onboarding are separate flows. An account may be
+created through email/password or Google OAuth before its academic profile is
+complete. An authenticated user with an incomplete profile should complete
+onboarding before entering the main student experience.
 
-Possible fields:
+The student profile stores Summit-specific identity and academic information
+used for personalisation.
+
+Profile fields:
 
 ```text
 user_id
-college_id
+full_name
+matric_number
 department_id
 level_id
-current_academic_session_id
 current_semester_id
 ```
 
-The profile is editable.
+Email belongs to Supabase Auth and is not duplicated in the profile. College is
+derived from Department, and Academic Session is derived from Semester.
+
+The academic profile is complete when full name, matric number, Department,
+Level and current Semester are all present. These fields remain nullable so an
+authenticated account can exist before onboarding is completed.
+
+The profile is editable. Students may change their full name, Department, Level
+and current Semester later.
 
 Important rule:
 
 ```text
 PROFILE = DISCOVERY / RECOMMENDATION
 
-PURCHASED ACCESS = ACTUAL ACCESS
+EFFECTIVE ACCESS POLICY = AUTHORIZATION
 ```
 
 Changing:
 
-- College
+- Full name
 - Department
 - Level
-- Academic Session
-- Semester
+- Current Semester
 
-must not remove or modify access to courses already purchased.
+must not remove or modify existing Course Access Grants.
 
-The profile helps determine what to show first.
+Department, Level and current Semester determine recommendation relevance.
+College is structural and may support browsing or filtering, but College alone
+must not make every Offering in that College recommended.
 
-It does not determine what the student is allowed to buy.
+Profile data does not authorize access and does not determine which Course
+Offerings may receive an access grant.
 
 ---
 
@@ -223,6 +241,10 @@ Academic Session
         |
         +-- Course Offerings
 ```
+
+Each Semester belongs to one Academic Session. A Course Offering belongs to a
+Semester, so its Academic Session is derived through that relationship rather
+than stored again on the Course Offering.
 
 Levels must be configurable data.
 
@@ -264,7 +286,8 @@ Courses do not need to belong permanently to only one Department because:
 
 # 8. Courses
 
-A Course represents the academic subject itself.
+A Course is the stable academic identity of a subject across Academic
+Sessions.
 
 Example:
 
@@ -273,7 +296,8 @@ course_code: GST 301
 course_title: Entrepreneurship
 ```
 
-A Course should exist once.
+A Course should exist once. For example, CSC 301 remains CSC 301 in 2026/2027,
+2027/2028 and later sessions.
 
 Do not create:
 
@@ -285,7 +309,8 @@ GST 301 - Cyber Security
 
 if they are the same course.
 
-The relationship between a Course and the students taking it belongs in Course Offering.
+The relationship between a Course and the students taking it belongs in the
+Course Offering audience mappings.
 
 ---
 
@@ -293,17 +318,18 @@ The relationship between a Course and the students taking it belongs in Course O
 
 Course Offering is one of the most important entities.
 
-It describes a Course being offered during a particular academic period.
+It describes a Course in a particular Semester and, through that Semester, a
+particular Academic Session.
 
 ```text
 Course Offering
   |
   +-- Course
-  +-- Academic Session
   +-- Semester
-  +-- Level
   +-- Exam Mode
-  +-- Departments taking it
+  +-- Department + Level audience mappings
+  +-- Expected Questions per Practice Set
+  +-- Practice Duration
 ```
 
 Example:
@@ -312,15 +338,27 @@ Example:
 Course: GST 301
 Session: 2026/2027
 Semester: First Semester
-Level: 300
 Exam Mode: CBT
-Departments:
-- Software Engineering
-- Computer Science
-- Cyber Security
+Audience:
+- Software Engineering, 300 Level
+- Computer Science, 300 Level
+- Cyber Security, 200 Level
 ```
 
-This allows the same Course to be offered differently later.
+Level does not belong directly to Course Offering. It belongs to each audience
+mapping so the same Course Offering can serve multiple Departments, including
+Departments taking the Course at different Levels.
+
+This allows the same Course to be offered differently later. Different Course
+Offerings may have different exam modes, audiences, materials, Practice Sets,
+questions and teaching emphasis.
+
+Each Course Offering also owns the expected number of Questions in every
+Practice Set and the practice duration. Admins configure duration in minutes;
+the runtime may represent it in seconds. V1 does not allow individual Practice
+Sets to override either value. Course Offering activity remains an independent
+operational setting and must not be inferred from whether it has a published
+Practice Set.
 
 Example:
 
@@ -329,7 +367,10 @@ Example:
 2027/2028 -> Written
 ```
 
-without changing the identity of the Course itself.
+without changing the identity of the Course itself. Offering the Course in a
+new Academic Session requires a new Course Offering; it must not overwrite an
+older offering because historical content and Attempts remain tied to the
+offering they used.
 
 ---
 
@@ -344,9 +385,12 @@ course_offering_departments
 
 course_offering_id
 department_id
+level_id
 ```
 
-This avoids duplicating Courses or Course Offerings.
+The combination of Course Offering, Department and Level defines an audience
+entry. This avoids duplicating Courses or Course Offerings while allowing one
+offering to serve different Departments at different Levels.
 
 ---
 
@@ -373,40 +417,64 @@ Students should also be able to search by:
 - course code
 - course title
 
-A student's profile may affect ordering or recommendations.
+A student's Department, Level and current Semester determine recommendation
+relevance through the Offering's academic assignments. College is structural
+browsing/filter context and must not independently recommend every Offering in
+the College.
 
 It must not restrict the wider catalogue.
 
+College-first discovery is derived through the Colleges of Departments attached
+to Course Offerings. A Course itself does not permanently belong to a College
+or Department.
+
+Candidate discovery uses read-only server functions. Browse All is available
+independently of profile matching, while Course details may expose safe metadata
+for active, published Practice Sets: title, position, derived Question count and
+an existing in-progress Attempt identifier. These reads never create Attempts
+and never expose Question or protected review content; actual Question delivery
+remains behind the trusted Practice runtime.
+
 ---
 
-# 12. Recommended Courses vs Purchased Courses
+# 12. Recommended Courses vs Accessible Courses
 
 These are separate concepts.
 
 ```text
 RECOMMENDED COURSES
-Based on profile and current academic period
+Based on Department + Level + current Semester assignments
 
-PURCHASED COURSES
-Based on active access records
+ACCESSIBLE COURSES
+Based on the centralized effective-access decision
 ```
 
 The dashboard can show:
 
 ```text
 YOUR COURSES
-Courses currently unlocked
+Course Offerings the Candidate can currently access
 
 RELEVANT COURSES
-Suggested from profile
+Active offerings matching profile Department + Level + current Semester
 
 BROWSE ALL COURSES
-Open catalogue
+Open catalogue, unrestricted by profile
 ```
 
-A course can be relevant without being purchased.
+A course can be relevant without effective access. Academic assignment determines
+relevance, not authorization.
 
-A purchased course remains accessible even after profile changes, until its access expires.
+A Candidate may access an Offering outside their current academic profile. Profile
+changes never remove an existing Course Access Grant; the grant remains effective
+until it expires or is revoked.
+
+Your Courses and Relevant Courses are intentionally separate dashboard lists.
+Relevant Courses exclude offerings already in Your Courses and do not confer
+authorization. A Course detail may still report an existing in-progress Attempt
+after effective access ends so the Candidate can Continue it; only an explicit
+Start command can create a new Attempt, and that command requires a positive
+server-side effective-access decision.
 
 ---
 
@@ -436,7 +504,8 @@ The system should not assume every course has both.
 
 # 14. Practice Sets
 
-A Course Offering contains Practice Sets.
+A Practice Set belongs to one Course Offering. It does not store a separate
+exam mode; behaviour is derived from the Course Offering.
 
 ```text
 Course
@@ -460,10 +529,12 @@ course_offering_id
 title
 position
 status
-question_count
 ```
 
-Possible status values:
+Question count is derived from Practice Set membership rather than stored as
+mutable duplicated state.
+
+The Practice Set is the only content publication unit. Its complete lifecycle is:
 
 ```text
 draft
@@ -472,67 +543,80 @@ published
 archived
 ```
 
-Students should only see published content.
+Questions belong to Course Offerings and may be reused across multiple Practice
+Sets within the same Course Offering. Membership is an explicit ordered mapping
+that prevents a Practice Set from containing a Question from another offering.
+
+Questions do not have an independent editorial or publication lifecycle.
+Question eligibility is derived from data integrity, `is_active`, exam-mode
+requirements and the Question's valid relationship to the Practice Set. The
+`is_active` field remains an operational kill switch.
+
+Moving a Practice Set from Draft to Review requires structural completeness:
+the exact Offering-configured Question count, valid and ordered mappings,
+same-Offering integrity, operationally active Questions, and all required CBT
+or Written answer data. Publishing requires the Practice Set to be in Review
+and the same readiness check to still pass. Readiness is derived; it is not an
+Approved or ready lifecycle state.
+
+A Candidate may start new practice only when the Course Offering is active, the
+Practice Set is active and published, the Candidate has effective access,
+and readiness/integrity still passes. These conditions are enforced by trusted
+server logic, not inferred from frontend visibility.
+
+Practice content is not yet readable by normal users. Student access and
+attempt-aware visibility policies will be added in later milestones.
 
 ---
 
 # 15. Questions
 
-Questions need to support both CBT and Written practice.
+Questions belong directly to Course Offerings, not permanently to a single
+Practice Set. The base Question contains student-visible prompt content and an
+operational active state. It does not carry an editorial or publication
+lifecycle.
 
 Shared question information may include:
 
 ```text
 id
+course_offering_id
 question_text
-question_type
-explanation
-reference_note
-source_id
-difficulty
-status
+is_active
 ```
 
-Initial question types:
-
-```text
-objective
-written
-```
-
-The exact database implementation can use either:
-
-- one question table with type-specific fields
-- or a shared question table plus type-specific detail tables
-
-The architecture should avoid duplicating the whole practice system unnecessarily.
+Exam mode is derived from the Course Offering. Options, correct answers, model
+answers, key points, explanations and references remain outside the base table
+so protected review content is separate from student-visible prompts.
 
 ---
 
 # 16. CBT Question Structure
 
-A CBT question needs:
+Student-visible CBT options are ordered child records of a Question. The UI may
+derive labels such as A/B/C/D from position, and the schema does not require
+exactly four options.
 
 ```text
 question_text
-option_a
-option_b
-option_c
-option_d
-correct_option
-explanation
-reference_note
+options
 ```
 
-Correct answers must not be exposed while the attempt is active.
+The correct option is stored separately in a protected answer-key table, with a
+database constraint ensuring that it belongs to the same Question. Explanation
+and reference content is also stored separately as protected review content.
 
-They are used only after submission or by trusted admin/content processes.
+Correct answers and review content must not be exposed while an Attempt is
+active.
 
 ---
 
 # 17. Written Question Structure
 
-A Written question needs:
+Written Questions keep student-visible prompt content in the base Question
+table. Model answers and ordered key points are stored separately as protected
+answer content, while explanations and references use the shared protected
+review-content record.
 
 ```text
 question_text
@@ -546,25 +630,30 @@ A student may:
 - type an answer
 - skip
 
-The model answer must remain hidden until the Practice Set is submitted.
-
-Key points can be stored as a list.
+Model answers, key points and review content must remain hidden until the
+Practice Set is submitted.
 
 ---
 
 # 18. Practice Attempt
 
-Every time a student starts a Practice Set, the system creates an Attempt.
+An explicit Candidate Start command creates a durable Attempt immediately.
+Starting the same Practice Set while that Candidate has an in-progress Attempt
+resumes it; at most one such Attempt may exist per Candidate and Practice Set.
+After submission, another explicit Start creates a new retry Attempt.
 
 ```text
 Attempt
   |
-  +-- Student
+  +-- Candidate
+  +-- Course Offering
   +-- Practice Set
+  +-- Exam Mode Snapshot
+  +-- Duration Snapshot
+  +-- Authoritative Deadline
   +-- Status
   +-- Started At
   +-- Submitted At
-  +-- Score if CBT
 ```
 
 Initial status values:
@@ -574,52 +663,44 @@ in_progress
 submitted
 ```
 
-Other states can be added later if needed.
+At Attempt creation, the server validates the complete published Practice Set
+and copies its curated Question and option order plus the relevant prompt,
+answer-key, explanation/reference, model-answer and key-point content into
+snapshot tables. Later edits to live content do not rewrite what the Candidate
+received.
+
+A new Attempt snapshots the Course Offering's practice duration and an
+authoritative deadline calculated from the database clock. Existing Attempts
+created before timed practice must not receive invented deadlines. The server
+enforces the deadline on reads and mutations; the browser countdown is
+presentation only and cannot extend an Attempt by refreshing or changing local
+state.
+
+Start is a command; read/resume is a query and must never create an Attempt.
+Effective access is required only to create a new Attempt. Ownership and Attempt
+state allow an already-started Attempt to be resumed, saved, submitted and
+reviewed after effective access ends, subject to the Attempt's own authoritative
+deadline. In particular, an Attempt validly started before a `free_until` cutoff
+may finish after that cutoff.
+
+Candidate answers are persisted server-side through trusted functions. Browser
+storage may later provide a safe responsive cache, but is not authorization or
+historical truth and must not contain protected pre-submission review data.
 
 ---
 
 # 19. Attempt Answers
 
-Answers should be stored separately from the Attempt.
+Candidate responses are stored separately from the frozen Attempt content.
 
 ```text
-Attempt
-  |
-  +-- Answer 1
-  +-- Answer 2
-  +-- Answer 3
-```
+CBT
+- response references a frozen Attempt option
+- missing response means unanswered
 
-A shared structure can include:
-
-```text
-attempt_id
-question_id
-answer_type
-selected_option
-written_answer
-is_skipped
-```
-
-CBT example:
-
-```text
-selected_option = B
-written_answer = null
-```
-
-Written example:
-
-```text
-selected_option = null
-written_answer = "..."
-```
-
-Skipped Written example:
-
-```text
-written_answer = null
-is_skipped = true
+WRITTEN
+- Candidate supplies non-blank response text
+- or explicitly marks the Question skipped
 ```
 
 ---
@@ -647,7 +728,13 @@ Unlock Review
 
 After submission, the student's submitted answers should not silently change.
 
-The result must come from the frozen submitted state.
+The result comes from the frozen submitted state and is stored separately with
+correct count, total Questions and percentage. It is not recalculated from live
+content later.
+
+The server scores the complete frozen Question set: an unanswered CBT Question
+is incorrect, and protected answers and review content become readable only
+after submission.
 
 ---
 
@@ -669,7 +756,17 @@ Student compares answers
 Student self-assesses
 ```
 
-The system does not automatically decide whether the written answer is correct in V1.
+Written review uses the frozen model answer, key points and review content. The
+system does not automatically decide whether the written response is correct in
+V1.
+
+Written submission requires every frozen Question to be either answered or
+explicitly skipped. Responses become immutable on submission; protected review
+content is then released and self-assessment may be saved or updated.
+
+When time expires, the server submits the Attempt using the responses already
+persisted. Any unresolved Written Questions remain timed-out/unanswered; the
+system must not convert them into Candidate-selected skips.
 
 ---
 
@@ -678,9 +775,9 @@ The system does not automatically decide whether the written answer is correct i
 Possible values:
 
 ```text
-got_it
-partially_got_it
-did_not_get_it
+Got it              (got_it)
+Partially got it    (partially_got_it)
+Did not get it      (did_not_get_it)
 ```
 
 Exact labels can change later.
@@ -729,7 +826,13 @@ Avoid unnecessary duplicate counters that can become inconsistent.
 
 # 24. Payments
 
-Payment is separate from academic profile.
+Payments are deferred beyond V1. Manual Admin Course Access grant/revoke remains
+part of V1, with reasons, integrity checks and append-only audit records. The
+platform access policy may also make an Offering accessible without an individual
+grant in `free` or active `free_until` mode.
+
+When commerce is introduced later, payment remains separate from academic
+profile and must not become the authorization source of truth.
 
 ```text
 Payment
@@ -750,13 +853,18 @@ failed
 abandoned
 ```
 
-Access should only be granted from a verified successful payment or a trusted administrative grant.
+When grants are required, they may be produced by a trusted manual Admin operation
+in V1 and later by verified individual purchase, academic bundle purchase or a
+future institutional grant. Payment itself never authorizes access.
 
 ---
 
-# 25. Purchase Structure
+# 25. Future Purchase Structure
 
-A student may purchase one or several Course Offerings.
+Future commerce must support both an individual Course Offering purchase and an
+academic bundle/package purchase. Buying an individual Offering must not require
+first buying the Candidate's Department/Level package, and Candidates may buy
+Offerings outside their current academic profile.
 
 ```text
 Purchase
@@ -767,16 +875,21 @@ Purchase
   |
   +-- Purchase Items
         |
-        +-- Course Offering A
-        +-- Course Offering B
-        +-- Course Offering C
+        +-- Individual Course Offering
+        +-- or Academic Bundle snapshot
+              |
+              +-- Explicit Course Offering items
 ```
 
-This supports bundles without tying the architecture to one fixed bundle definition.
+One purchase therefore does not imply exactly one Course Offering. Trusted
+processing of an academic bundle purchase produces Course Access Grants for
+every included Course Offering. Those grants become the authorization primitive
+whenever the platform is in `grant_required` mode or a `free_until` cutoff has
+been reached.
 
 ---
 
-# 26. Access Duration
+# 26. Future Purchase Duration
 
 Initial duration choices:
 
@@ -801,42 +914,56 @@ Do not calculate access from the student's current profile.
 
 # 27. Course Access
 
-Course Access is the source of truth for unlocking paid content.
+The server must evaluate effective Course Offering access centrally. The platform
+access policy supports three modes:
 
 ```text
-Course Access
+free           -> no individual Course Access Grant required
+free_until     -> before cutoff no grant required; at/after cutoff an active grant is required
+grant_required -> an active effective Course Access Grant is required
+```
+
+When grants are required, including at or after a `free_until` cutoff, Course
+Access Grants are the authorization primitive for a specific Course Offering.
+They do not target the stable Course record.
+
+```text
+Course Access Grant
   |
-  +-- User
+  +-- Candidate
   +-- Course Offering
-  +-- Access Start
-  +-- Access End
+  +-- Starts At
+  +-- Expires At
   +-- Source
+  +-- Optional Revocation
 ```
 
-Possible sources:
+Multiple historical grants may exist for the same Candidate and Course
+Offering. A Candidate has active access when any matching grant has started,
+has not expired and has not been revoked.
 
 ```text
-purchase
-admin_grant
-promotion
+starts_at <= now()
+AND expires_at > now()
+AND revoked_at IS NULL
 ```
 
-Important:
+A Candidate may receive access to any Course Offering regardless of their
+current Department, Level, Semester or other profile fields. Academic profile
+data controls relevance and discovery, not authorization, so profile changes
+must not alter or remove existing grants.
 
-```text
-USER CHANGES DEPARTMENT
-        |
-        v
-COURSE ACCESS REMAINS UNCHANGED
-```
-
-Profile changes must not revoke access.
+Manual Admin grant/revoke is part of V1. Admin operations must support access
+inspection, required reasons, appropriate idempotency and append-only audit.
+Verified individual payment, academic bundle purchase, manual Admin action and a
+future institutional process may produce Course Access Grants. The payment or
+package record itself is never authorization.
 
 ---
 
 # 28. Access Check
 
-Before opening paid content:
+Before starting new practice, trusted server logic resolves effective access:
 
 ```text
 User
@@ -845,27 +972,47 @@ User
 Course Offering
   |
   v
-Check Active Access
+Resolve Effective Access
   |
-  +-- Active -> Allow
+  +-- free -> Allow via platform_free
   |
-  +-- Missing/Expired -> Show Purchase
+  +-- free_until and before cutoff -> Allow via free_period
+  |
+  +-- free_until at/after cutoff and active grant -> Allow via course_access_grant
+  |
+  +-- grant_required and active grant -> Allow via course_access_grant
+  |
+  +-- Otherwise -> Show access unavailable
 ```
 
-This must be enforced on the backend/database level.
+This must be enforced on the backend/database level. The browser consumes the
+authoritative result; it must not independently combine policy mode, cutoff and
+grant state. Reaching a `free_until` cutoff ends grant-free starts but does not
+change the stored policy mode: a Candidate with an active Course Access Grant may
+still start. No scheduler, Admin action or database mutation is required at the
+cutoff. An Attempt validly started before it remains governed by its snapshotted
+authoritative deadline.
 
 Hiding a button in the frontend is not access control.
 
 ---
 
-# 29. Bundles
+# 29. Future Bundles
 
-Bundle pricing is a commerce rule.
+Academic bundle/package commerce is deferred beyond V1. A bundle is scoped by:
 
-It should not alter Course or Course Offering structure.
+- Department
+- Level
+- Academic Session
+- Semester
+
+Its composition is an explicit list of Course Offerings. Academic assignments may
+suggest or populate that list, but they are not live bundle membership: later
+assignment changes must not silently rewrite an existing bundle or the contents
+captured by an existing purchase.
 
 ```text
-Student selects courses
+Candidate chooses an individual Offering or academic bundle
         |
         v
 Pricing Logic
@@ -878,13 +1025,17 @@ Pricing Logic
 Final Amount
 ```
 
-After successful payment, normal Course Access records are created for each purchased Course Offering.
+After trusted successful purchase processing, normal Course Access Grants are
+created for each purchased Course Offering. Payment and bundle records do not
+replace effective-access evaluation; those grants authorize starts when the
+platform is in `grant_required` mode or a `free_until` cutoff has been reached.
 
 ---
 
 # 30. Content Source
 
-A Content Source records where academic material came from.
+A Content Source records where academic material came from and belongs to a
+specific Course Offering.
 
 Possible source types:
 
@@ -895,7 +1046,6 @@ student_jotting
 past_question
 lecture_question
 manual
-ai_generated
 other
 ```
 
@@ -904,19 +1054,24 @@ Possible information:
 ```text
 source_type
 course_offering_id
+title
 description
-file_reference
-submitted_by
+storage_path
 created_at
 ```
+
+Questions and Sources use an explicit many-to-many provenance relationship.
+Each relationship is constrained to one Course Offering, allowing a Question to
+retain multiple supporting Sources without crossing academic periods.
 
 Not every source has to be exposed directly to students, but the platform should retain it internally where possible.
 
 ---
 
-# 31. Content Contribution
+# 31. Future Content Contribution
 
-Contributors should not need full admin access.
+Contributor workflows are deferred beyond V1. If introduced later,
+contributors should not need full Admin access.
 
 They may submit:
 
@@ -943,47 +1098,57 @@ Submission is not publication.
 # 32. Content Review
 
 ```text
-SOURCE / SUBMISSION
-        |
-        v
-CONTENT REVIEW
-        |
-        +-- Reject
-        |
-        +-- Request Correction
-        |
-        +-- Approve
-                |
-                v
-         QUESTION PREPARATION
-                |
-                v
-         ANSWER VERIFICATION
-                |
-                v
-             PUBLISH
+Course
+  -> Course Offering
+      -> Practice Set (draft)
+          -> Add Questions manually or import them in bulk
+          -> Validate structural completeness
+          -> Practice Set (review)
+          -> Revalidate readiness
+          -> Practice Set (published)
+          -> Practice Set (archived)
 ```
 
-Possible statuses:
+The Practice Set lifecycle is exactly:
 
 ```text
 draft
-submitted
-under_review
-changes_requested
-approved
+review
 published
-rejected
 archived
 ```
 
-The system does not need every status on day one, but it should not assume content goes directly from creation to publication.
+There is no Approved Practice Set state. Questions do not have a parallel
+editorial/publication lifecycle. Readiness is a derived result used to gate
+Review and Publish.
+
+V1 Admin authoring is Practice Set-first rather than Question Pool-first.
+Questions remain reusable entities underneath, but the primary workflow does
+not require an Admin to manage a global Question library before building a Set.
+
+Bulk Question Import is V1 and runs inside a Practice Set:
+
+```text
+upload -> parse -> validate -> preview -> confirm -> atomic commit
+```
+
+The final commit creates Questions and ordered Practice Set mappings in one
+transaction. A failure must not leave a partial import.
+
+Frozen Attempt snapshots protect historical Attempts from later live-content
+changes. For future Attempts, a substantive correction to a Question reused by
+published Practice Sets must not silently alter every Set that maps it. V1 uses
+impact-aware replacement and explicit remapping for selected Sets; harmless
+typo, formatting or reference corrections may be audited in place. There is no
+formal Question-version or Practice-Set-version subsystem in V1.
 
 ---
 
-# 33. Content Manager
+# 33. Future Content Operations Roles
 
-A Content Manager should have controlled permissions.
+A dedicated Content Manager role is not part of V1. V1 roles remain Candidate
+and Admin. The architecture may allow a narrower content role later without
+introducing a permission matrix before there is a demonstrated need.
 
 Possible responsibilities:
 
@@ -991,12 +1156,12 @@ Possible responsibilities:
 - manage courses
 - manage Course Offerings
 - create/edit Practice Sets
-- review questions
-- approve publication
+- review Practice Set content
+- publish a reviewed Practice Set whose readiness check passes
 - handle reported errors
 - track source information
 
-This role should be separate from normal student access.
+Any future content role must remain separate from Candidate access.
 
 ---
 
@@ -1026,32 +1191,29 @@ Content
 Users
 - Student profiles
 - Access
-- Payments
 
 Operations
 - Contributors
-- Content managers
 - Reports
 ```
 
-Permissions should be role-based.
+V1 Admin operations must be server-authorized from explicit Admin membership.
+Frontend visibility is not authorization.
 
 ---
 
 # 35. Roles
 
-Possible initial roles:
+Candidate is the normal role for an authenticated user and does not require an
+editable role field in the profile. Admin authority is assigned explicitly
+through `app_admins`, separate from profiles and Candidate academic data.
 
-```text
-student
-contributor
-content_manager
-admin
-```
+Admin membership and Candidate Course Access are independent. Admin status does
+not automatically grant access to Course Offerings; later policies may combine
+the two checks explicitly where required.
 
-A user may hold more than one role later.
-
-Do not make every non-student a full admin.
+V1 has exactly two roles: Candidate and Admin. A Content Manager role and a
+detailed permission matrix are deferred.
 
 ---
 
@@ -1070,12 +1232,11 @@ A student must not:
 - modify correct CBT answers
 - change model answers
 - grant themselves access
-- change payment status
-- publish questions
+- publish or archive Practice Sets
+- bypass Practice Set readiness
 
-A contributor may submit content but should not automatically publish it.
-
-A Content Manager may manage content without unrestricted platform administration.
+A contributor may submit content in a future contribution workflow but should
+not automatically publish a Practice Set.
 
 ---
 
@@ -1097,17 +1258,17 @@ attempt_answers
 
 course_access
 - user can read own access
-- user cannot create paid access directly
-
-payments
-- user can read own payments
-- payment verification is server-side
+- user cannot grant or revoke access directly
 
 questions
-- students receive only appropriate published practice content
+- students receive Questions only through an eligible published Practice Set
 ```
 
 Correct answers and model answers must not be exposed carelessly during active Attempts.
+
+The initial Practice Content tables have RLS enabled with no normal-user grants
+or policies. They remain inaccessible to normal users until later access and
+Attempt policies deliberately expose the appropriate student-visible content.
 
 ---
 
@@ -1118,16 +1279,21 @@ Some actions must happen through trusted backend logic.
 Examples:
 
 ```text
-verify payment
-grant purchased access
+inspect Candidate and Offering access
+grant or revoke manual Course Access
 calculate CBT result
-publish reviewed content
+publish a reviewed Practice Set whose readiness check passes
 grant administrative access
-revoke access
 change privileged roles
 ```
 
 Frontend code should not be trusted to perform these directly.
+
+Append-only Admin audit data must exist before consequential Admin mutation
+APIs. At minimum this covers Practice Set transitions, access grant/revoke,
+academic and Offering configuration changes, substantive published-content
+corrections/replacements, and Admin membership changes. V1 does not require an
+Activity UI.
 
 ---
 
@@ -1156,10 +1322,6 @@ Frontend code should not be trusted to perform these directly.
   /:attemptId
   /:attemptId/review
 
-/purchases
-  /checkout
-  /history
-
 /profile
 
 /admin
@@ -1167,7 +1329,7 @@ Frontend code should not be trusted to perform these directly.
   /courses
   /content
   /users
-  /payments
+  /candidates
 
 /content
   /submissions
@@ -1195,7 +1357,6 @@ src/
     practice/
     attempts/
     progress/
-    payments/
     access/
     content/
     admin/
@@ -1249,38 +1410,19 @@ in_progress
 submitted
 ```
 
-Content:
+Practice Set:
 
 ```text
 draft
   |
   v
-submitted
-  |
-  v
-under_review
-  |
-  +--> changes_requested
-  |
-  +--> rejected
-  |
-  v
-approved
+review
   |
   v
 published
-```
-
-Payment:
-
-```text
-pending
   |
-  +--> successful
-  |
-  +--> failed
-  |
-  +--> abandoned
+  v
+archived
 ```
 
 Clear transitions reduce inconsistent states.
@@ -1291,36 +1433,43 @@ Clear transitions reduce inconsistent states.
 
 ## Academic
 
+- A Course is the stable academic identity across Academic Sessions.
+- A Course Offering is that Course in one Semester and its parent Academic Session.
 - One Course should not be duplicated for every Department.
 - Levels must be configurable.
-- Course Offering defines who takes a Course in a period.
+- Level does not belong directly to Course Offering.
+- Course Offering audience is defined by Department + Level mappings.
+- Older Course Offerings must be preserved for historical content and Attempts.
 - Exam mode belongs to Course Offering.
+- Expected Questions per Practice Set and practice duration belong to Course Offering.
 
 ## Access
 
-- Any student can buy any available Course Offering.
-- Student profile does not restrict purchases.
+- A Candidate may be granted access to any available Course Offering.
+- Student profile does not restrict access eligibility.
 - Profile changes do not modify existing access.
-- Course Access is the source of truth for paid access.
+- Effective access is centrally evaluated as platform `free`, a `free_until`
+  window before cutoff, or an active Course Access Grant when the policy is
+  `grant_required` or `free_until` has reached its cutoff.
+- Payment is never authorization.
 
 ## Practice
 
 - Active CBT Attempts do not expose correct answers.
 - Active Written Attempts do not expose model answers.
 - Submitted Attempts are frozen.
+- New Attempts snapshot duration and a server-authoritative deadline.
+- Existing pre-timer Attempts do not receive invented deadlines.
 - CBT scores come from submitted answers.
 - Written evaluation is self-assessed in V1.
+- Written timeout leaves unresolved Questions timed-out/unanswered, not skipped.
 
 ## Content
 
-- Student-facing content must be published.
+- Practice Set is the only content publication lifecycle.
+- Questions have derived eligibility and retain `is_active` as a kill switch.
 - Contributor submission is not automatic publication.
 - Source/provenance should be retained where possible.
-
-## Payments
-
-- Successful payment verification is server-side.
-- Frontend success screens do not themselves grant access.
 
 ---
 
@@ -1331,14 +1480,7 @@ USER
  |
  +-- PROFILE
  |
- +-- PAYMENTS
- |     |
- |     +-- PURCHASE
- |            |
- |            +-- PURCHASE ITEMS
- |                    |
- |                    v
- |              COURSE ACCESS
+ +-- COURSE ACCESS GRANTS
  |
  +-- ATTEMPTS
        |
@@ -1361,11 +1503,19 @@ COURSE
  |
  +-- COURSE OFFERING
        |
-       +-- OFFERING DEPARTMENTS
+       +-- SEMESTER
+       |     |
+       |     +-- ACADEMIC SESSION
+       |
+       +-- OFFERING DEPARTMENT + LEVEL AUDIENCES
+       |
+       +-- EXPECTED QUESTIONS + PRACTICE DURATION
        |
        +-- PRACTICE SETS
                |
-               +-- QUESTIONS
+               +-- ORDERED QUESTION MAPPINGS
+                       |
+                       +-- QUESTIONS
                        |
                        +-- SOURCE
 
@@ -1376,7 +1526,21 @@ CONTENT SUBMISSION
  |
  +-- REVIEW
  |
- +-- PUBLICATION
+ +-- PRACTICE SET AUTHORING
+
+
+PLATFORM ACCESS POLICY
+ |
+ +-- free / free_until / grant_required
+
+
+ACADEMIC BUNDLE (FUTURE)
+ |
+ +-- DEPARTMENT + LEVEL + ACADEMIC SESSION + SEMESTER
+ |
+ +-- EXPLICIT COURSE OFFERING ITEMS
+ |
+ +-- PURCHASE SNAPSHOT -> COURSE ACCESS GRANTS
 ```
 
 ---
@@ -1400,6 +1564,7 @@ course_offering_departments
 
 practice_sets
 questions
+practice_set_questions
 question_key_points
 content_sources
 
@@ -1407,15 +1572,19 @@ attempts
 attempt_answers
 written_self_assessments
 
-payments
+course_access_grants
+access_policy_configuration
+admin_audit
+
+future commerce concepts:
+academic_bundles
+academic_bundle_items
 purchases
 purchase_items
-course_access
 
 content_submissions
 content_reviews
-
-user_roles
+app_admins
 ```
 
 Columns and constraints should be finalised during schema design.
@@ -1451,8 +1620,8 @@ Profile
 Academic Structure
 Course Catalogue
 Course Offerings
-Course Access
-Payments
+Effective Access Policy
+Course Access Grants
 Practice Sets
 CBT Attempts
 Written Attempts
@@ -1462,6 +1631,8 @@ Self-Assessment
 Progress
 Admin Content Management
 Basic Content Review
+Manual Course Access Administration
+Admin Audit
 ```
 
 It does not need to solve:
@@ -1503,7 +1674,7 @@ One valid profile
 One Course Offering
   |
   v
-One purchased/allowed access
+One positive effective-access decision
   |
   v
 One Practice Set
@@ -1528,16 +1699,20 @@ Keep these concepts separate:
 
 ```text
 COURSE
-is the academic subject
+is the stable academic identity across Academic Sessions
 
 COURSE OFFERING
-is that Course being offered during a specific academic period
+is that Course in a specific Semester and its parent Academic Session
+
+COURSE OFFERING DEPARTMENT
+defines a Department + Level audience for the Course Offering
 
 PROFILE
-helps recommend relevant Courses
+recommends Offerings from Department + Level + current Semester assignments
 
 COURSE ACCESS
-decides what the student has actually unlocked
+is resolved centrally from free policy, the pre-cutoff free window, or an active
+grant under grant-required or post-cutoff free-until policy
 
 PRACTICE SET
 contains the questions
