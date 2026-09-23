@@ -157,10 +157,11 @@ Those responsibilities belong to other domains.
 
 # 5. Student Profile
 
-Authentication and academic onboarding are separate flows. An account may be
-created through email/password or Google OAuth before its academic profile is
-complete. An authenticated user with an incomplete profile should complete
-onboarding before entering the main student experience.
+Authentication and academic onboarding are separate flows. V1 supports
+email/password authentication; Google OAuth is deferred. An account may exist
+before its academic profile is complete. An authenticated user with an
+incomplete profile should complete onboarding before entering the main student
+experience.
 
 The student profile stores Summit-specific identity and academic information
 used for personalisation.
