@@ -373,11 +373,154 @@ new Academic Session requires a new Course Offering; it must not overwrite an
 older offering because historical content and Attempts remain tied to the
 offering they used.
 
+## Phase 3: Course Offering control contract
+
+Phase 3 adds trusted Admin control of an existing Offering's practice
+configuration, exam mode, and `is_active` state. It does not change the
+Offering's Course or Semester, create Offerings, or manage Course Assignments.
+The current schema permits a legacy/unconfigured `NULL`/`NULL` pair for
+`expected_questions_per_practice_set` and `practice_duration_seconds`. Initial
+configuration supplies both positive integers atomically. Later changes may
+replace either or both values atomically, but this Admin API cannot clear them
+back to `NULL`. Existing positive-integer schema bounds apply; no smaller limit
+is established here. Explicit expected-current inputs compare against the
+locked pair with `NULL`-safe semantics. Unchanged requests are rejected without
+audit. Initial configuration may omit a reason; subsequent count or duration
+changes require a trimmed nonblank reason.
+
+When expected Question count changes, every Practice Set currently in Review
+or Published must be fully ready under the proposed configuration. This
+includes inactive Sets and pre-existing unrelated readiness defects. Evaluate
+all protected Sets through the shared readiness rules and identify every Set
+that fails. Draft and Archived Sets do not block. No Question, mapping, status,
+or Attempt snapshot changes automatically. A duration-only change does not run
+this full protected-Set gate. Duration changes may occur while Sets are
+Published and affect new Attempts only; existing duration snapshots, start
+times, deadlines, responses, submission state, and finalization stay intact.
+
+A CBT/Written exam-mode change requires no Questions, no Attempts, and no
+Review, Published, or Archived Sets for the Offering. Empty Draft Sets are
+allowed. A mode change requires an expected-current mode and a trimmed
+nonblank reason. It performs no conversion or history rewrite. Existing
+exam-mode compatibility triggers remain unchanged as integrity backstops.
+
+Offering activation/deactivation changes only `is_active`. Activation needs
+no readiness gate and may omit a reason; deactivation requires a trimmed
+nonblank reason. Both require the expected-current activity value and reject
+no-ops. Deactivation blocks new Attempts but preserves grants, Set lifecycle,
+content, Attempt history, and in-progress Attempt completion under the frozen
+deadline. An active Offering may still have unready Sets; the Candidate start
+operation continues enforcing its own conditions.
+
+The planned Admin-facing functions are:
+
+```sql
+public.admin_update_course_offering_practice_configuration(
+  p_course_offering_id uuid,
+  p_expected_question_count integer,
+  p_expected_duration_seconds integer,
+  p_new_question_count integer,
+  p_new_duration_seconds integer,
+  p_reason text default null
+)
+
+public.admin_change_course_offering_exam_mode(
+  p_course_offering_id uuid,
+  p_expected_exam_mode text,
+  p_new_exam_mode text,
+  p_reason text
+)
+
+public.admin_set_course_offering_activity(
+  p_course_offering_id uuid,
+  p_expected_is_active boolean,
+  p_new_is_active boolean,
+  p_reason text default null
+)
+
+public.admin_get_course_offering_control_context(p_course_offering_id uuid)
+
+public.admin_preview_course_offering_practice_configuration(
+  p_course_offering_id uuid,
+  p_new_question_count integer,
+  p_new_duration_seconds integer
+)
+```
+
+Every Admin-facing function must be `SECURITY DEFINER`, set an empty
+`search_path`, call `public.assert_admin()`, derive the actor on the server,
+grant EXECUTE only to `authenticated`, and grant no browser role direct table
+mutation. The context and configuration-preview functions must be genuinely
+read-only: they must not finalize Attempts or mutate content, configuration,
+lifecycle, grants, policy, audit, or runtime state to compute impact. Unlike an
+attempt-aware Candidate detail RPC, they perform no lazy finalization.
+Preview has no persistent locks, tokens, tables, mutations, or audit records.
+Its result is advisory: the mutation recomputes the decision under locks.
+
+The new internal helper evaluates proposed count/duration using the same rules
+as current readiness:
+
+```sql
+public.evaluate_practice_set_readiness_with_configuration(
+  p_practice_set_id uuid,
+  p_expected_questions_per_practice_set integer,
+  p_practice_duration_seconds integer
+) returns jsonb
+```
+
+It is not directly executable by browser roles.
+`public.evaluate_practice_set_readiness(uuid)` remains the authoritative
+current-configuration wrapper with identical behavior and grants. Preview and
+mutation share that implementation rather than duplicating readiness rules.
+
+Each Phase 3 Offering-control mutation uses one database transaction and relies
+on PostgreSQL `READ COMMITTED` semantics. After Admin assertion, it validates
+inputs and the transaction-isolation context before acquiring mutation locks.
+Only `READ COMMITTED` is supported: an unsupported isolation context must be
+rejected with deliberate SQLSTATE `0A000` (`feature_not_supported`) and the
+message `Phase 3 Offering control requires READ COMMITTED transaction isolation`.
+This rejection occurs before any consequential mutation and creates no audit
+event. The implementation must not silently assume equivalent behavior under
+`REPEATABLE READ` or `SERIALIZABLE`.
+
+After validation, the mutation locks the Offering `FOR UPDATE` and verifies
+expected values.
+Count and mode changes then lock **all** child Practice Sets in ID order with
+`FOR UPDATE NOWAIT`, including Draft Sets. A lock conflict aborts with retryable
+SQLSTATE `40001`; `SKIP LOCKED` is forbidden. After all required locks are
+acquired, subsequent SQL statements inspect statuses, impact, and proposed
+readiness or mode restrictions using fresh statement snapshots under
+`READ COMMITTED`. The RPC then uses a defensive `UPDATE` with expected-value
+predicates and `RETURNING`, requires exactly one updated row, and records the
+audit event before commit. Duration-only and
+activity-only changes require the Offering lock but not child Set locks.
+Offering deactivation serializes with the existing Attempt-start path, which
+locks the Offering. Future content-authoring RPCs must join a compatible
+Offering/Practice-Set locking protocol.
+
+Successful changes create exactly one append-only audit event through
+`public.record_admin_audit_event(...)` in the mutation transaction. The target
+type is `course_offering` and the target ID is its UUID. Action names are
+`course_offering.configuration_updated`,
+`course_offering.exam_mode_changed`, and
+`course_offering.activity_changed`. Concise metadata includes previous/new
+values and the relevant protected-Set or activity impact summary, without
+Question payloads. Validation failure, stale expected state, lock conflict,
+readiness/mode rejection, and no-op create no event; an audit failure rolls
+back the Offering change. Required reasons follow the operation rules above.
+
+Course Assignment mutation, Question/Source authoring, manual Course Access
+mutation, payments, Admin/Candidate UI, platform policy mutation, and legacy
+`NULL`-configuration removal/backfill are separate work. Assignment-free
+general browse/search and archived in-progress Attempt discoverability are
+known separate Candidate discovery issues. Phase 3 does not change Candidate
+runtime or discovery functions.
+
 ---
 
 # 10. Departments Attached to a Course Offering
 
-A Course Offering may apply to one or many Departments.
+A Course Offering may apply to zero or many Departments.
 
 A clean model is an explicit relationship:
 
@@ -429,12 +572,20 @@ College-first discovery is derived through the Colleges of Departments attached
 to Course Offerings. A Course itself does not permanently belong to a College
 or Department.
 
-Candidate discovery uses read-only server functions. Browse All is available
-independently of profile matching, while Course details may expose safe metadata
-for active, published Practice Sets: title, position, derived Question count and
-an existing in-progress Attempt identifier. These reads never create Attempts
-and never expose Question or protected review content; actual Question delivery
-remains behind the trusted Practice runtime.
+Candidate catalogue/discovery is conceptually a read surface, but its trusted
+RPCs are not uniformly read-only. The current attempt-aware Course Offering
+detail path may lazily finalize an expired Attempt as narrowly scoped trusted
+server-side runtime behavior. This grants no Candidate direct table-mutation
+privileges. Phase 3 Admin context and preview RPCs must remain genuinely
+read-only, as specified in the Offering-control contract above.
+
+The product rule makes Browse All independent of profile matching; the current
+assignment-free browse/search discrepancy remains a separate issue. Course
+details may expose safe metadata for active, published Practice Sets: title,
+position, derived Question count, and an existing in-progress Attempt identifier.
+Discovery/detail RPCs never create Attempts and never expose Question or
+protected review content; actual Question delivery remains behind the trusted
+Practice runtime.
 
 ---
 
@@ -565,8 +716,13 @@ Practice Set is active and published, the Candidate has effective access,
 and readiness/integrity still passes. These conditions are enforced by trusted
 server logic, not inferred from frontend visibility.
 
-Practice content is not yet readable by normal users. Student access and
-attempt-aware visibility policies will be added in later milestones.
+Direct Candidate access to protected practice-content tables remains denied;
+Candidates already receive authorized content through trusted runtime RPCs.
+Pre-submit RPCs expose only safe, frozen Attempt content. Protected answer and
+review material remains governed by submission and runtime rules, and Attempt
+snapshots remain the historical truth. Restricted direct table access does not
+mean that Candidates have no content access, nor does RPC access authorize
+direct `SELECT` on protected content tables.
 
 ---
 

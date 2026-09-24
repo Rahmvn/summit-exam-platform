@@ -249,12 +249,34 @@ Expected Question count and practice duration belong to the Course Offering. V1 
 
 Changing duration affects future Attempts only. Existing Attempts retain their frozen duration and authoritative deadline.
 
-Changing expected Question count must be blocked when the new value would
-invalidate any Practice Set currently in Review or Published. The impact result
-must identify every affected Review or Published Set and explain why the change
-cannot proceed. Draft Practice Sets may adapt to the new Offering requirement.
+Phase 3 Offering control covers the expected Question count, practice duration,
+exam mode, and Offering activity. It does not create or manage Course Assignments.
+An initial legacy `NULL`/`NULL` practice configuration may be set as one pair;
+both new values must be positive integers. Once configured, either value may be
+changed, but neither may be cleared back to `NULL`. Count and duration are saved
+atomically. An unchanged request is rejected. The UI must not invent a smaller
+numeric limit than the database's positive-integer bounds.
 
-Exam mode is not an ordinary harmless select after incompatible content exists. The UI must explain and enforce the restriction supplied by the trusted backend contract.
+Changing expected Question count requires every Review or Published Practice
+Set, including an inactive one, to be fully ready under the proposed
+configuration. A pre-existing unrelated readiness blocker also prevents this
+count change. The impact result identifies every protected Set that fails and
+explains why. Draft and Archived Sets do not block; Draft Sets inherit the new
+requirement without automatic Question, mapping, or lifecycle changes.
+Duration-only changes do not run this full protected-Set readiness gate.
+
+The UI shows an advisory read-only preview before an expected-count change.
+Confirmation invokes the authoritative mutation, which rechecks current values,
+readiness, and impact under locks. A preview never reserves an outcome. Initial
+configuration has an optional reason; changing either value of an already
+configured pair requires a nonblank reason.
+
+Exam mode can change between CBT and Written only when the Offering has no
+Questions, no Attempts, and no Review, Published, or Archived Practice Sets.
+Empty Draft Sets may remain. The UI explains these restrictions and shows the
+blocking counts; it never offers automatic content conversion. A mode change
+requires a nonblank reason. Existing database compatibility triggers remain
+integrity backstops.
 
 ---
 
@@ -284,7 +306,13 @@ Deactivating an Offering:
 - does not erase historical Attempts;
 - permits an existing in-progress Attempt to finish subject to its own authoritative deadline.
 
-Require confirmation with concise impact copy. Show related Published Sets or active access context when that materially changes the decision.
+Deactivation requires a nonblank reason. Activation has no readiness
+prerequisite and its reason is optional. Both changes require the expected
+current activity state; an unchanged request is rejected. Require confirmation
+with concise impact copy. Show related Published Sets, active access, or
+in-progress Attempts when that materially changes the decision. The trusted
+mutation serializes with new Attempt starts; an active Offering can still have
+structurally unready Sets that the Candidate runtime must reject.
 
 ---
 
@@ -335,6 +363,14 @@ Removing an assignment changes relevance but does not:
 
 Use concise confirmation when the assignment is active or feeds visible recommendations.
 
+Course Assignment mutation is deferred beyond Phase 3. Current Candidate
+browse/search requires an eligible assignment even without an academic audience
+filter, contrary to the locked rule that zero assignments must not prevent
+general or direct catalogue discovery. Correct that discovery dependency in
+its own slice before enabling Assignment mutation; do not change the product
+rule to match the current implementation. Assignment never grants or revokes
+Course Access.
+
 ---
 
 # 11. Practice Configuration
@@ -349,7 +385,11 @@ Every Practice Set inherits these values. The workspace should distinguish inher
 
 Practice duration is required for timed practice. The authoritative server operation snapshots duration and deadline when an Attempt starts; the Admin UI never edits an existing Attempt deadline by changing Offering configuration.
 
-Configuration mutations are consequential and require server validation and append-only audit. The UI should show an impact summary before a change that affects existing content readiness.
+Configuration mutations are consequential and require server validation and
+append-only audit. The UI should show an impact summary before a change that
+affects existing content readiness. Only the Admin read and preview surfaces
+needed to explain Offering control belong to Phase 3; Admin UI implementation
+remains separate.
 
 ---
 
@@ -1139,12 +1179,12 @@ Do not guess these during frontend implementation:
 
 Frontend work that depends on one of these decisions must stop at the contract boundary rather than inventing behavior.
 
-The current schema does not yet supply every trusted Admin mutation, readiness, audit, timed-practice configuration, or effective-access-policy contract described here. That is a backend-contract dependency, not permission for the browser to bypass the requirement.
-
-The current practice-content migration also retains a `questions.status` column
-with publication-like values. The locked product model supersedes that field's
-UI meaning: V1 Admin must not expose it as a Question lifecycle. Any later schema
-reconciliation requires separately authorized backend work.
+The current schema does not yet supply every trusted Admin mutation described
+here. Admin audit, Practice Set readiness, timed-practice snapshots, and the
+central effective-access policy already have backend foundations. A missing
+Admin mutation is not permission for the browser to bypass trusted operations.
+The domain-alignment migration removed the earlier `questions.status` column;
+V1 Admin must not expose a Question publication lifecycle.
 
 ---
 
