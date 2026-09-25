@@ -1,0 +1,114 @@
+name: Candidate assignment-free discovery validation
+
+on:
+  push:
+    branches:
+      - ci/candidate-assignment-free-discovery-validation
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      TEST_DIR: supabase/tests/temporary/candidate_assignment_free_discovery
+      TARGET_MIGRATION: 20260925060226_candidate_assignment_free_discovery.sql
+
+    steps:
+      - name: Check out temporary validation branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify PostgreSQL 17 service
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client
+          fi
+          pg_isready -d postgres
+          server_version="$(psql -d postgres -Atc 'show server_version')"
+          echo "PostgreSQL server version: ${server_version}"
+          [[ "${server_version}" == 17.* ]]
+
+      - name: Create isolated validation databases
+        shell: bash
+        run: |
+          set -euo pipefail
+          createdb summit_fresh_replay
+          createdb summit_behavior
+
+      - name: Replay complete migration chain through target
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql -d summit_fresh_replay -f "${TEST_DIR}/bootstrap.sql"
+          found_target=false
+          while IFS= read -r migration; do
+            echo "Fresh replay: $(basename "${migration}")"
+            psql -v ON_ERROR_STOP=1 -d summit_fresh_replay -f "${migration}"
+            if [[ "$(basename "${migration}")" == "${TARGET_MIGRATION}" ]]; then
+              found_target=true
+              break
+            fi
+          done < <(find supabase/migrations -maxdepth 1 -type f -name '*.sql' | sort)
+          if [[ "${found_target}" != true ]]; then
+            echo "Target migration was not found during fresh replay" >&2
+            exit 1
+          fi
+          echo "FRESH_MIGRATION_REPLAY_PASSED"
+
+      - name: Prepare pre-migration behavior baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql -d summit_behavior -f "${TEST_DIR}/bootstrap.sql"
+          found_target=false
+          while IFS= read -r migration; do
+            if [[ "$(basename "${migration}")" == "${TARGET_MIGRATION}" ]]; then
+              found_target=true
+              break
+            fi
+            echo "Behavior baseline replay: $(basename "${migration}")"
+            psql -v ON_ERROR_STOP=1 -d summit_behavior -f "${migration}"
+          done < <(find supabase/migrations -maxdepth 1 -type f -name '*.sql' | sort)
+          if [[ "${found_target}" != true ]]; then
+            echo "Target migration was not found during baseline replay" >&2
+            exit 1
+          fi
+          psql -v ON_ERROR_STOP=1 -d summit_behavior -f "${TEST_DIR}/fixtures_and_snapshot.sql"
+
+      - name: Apply target migration to behavior database
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 -d summit_behavior \
+            -f "supabase/migrations/${TARGET_MIGRATION}"
+
+      - name: Run discovery behavior, access, and security assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 -d summit_behavior -f "${TEST_DIR}/assertions.sql"
